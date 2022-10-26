@@ -11,12 +11,14 @@ mod types;
 pub(crate) use facade::PageFiles;
 pub(crate) use types::{FileInfo, FileMeta, PageHandle};
 
+mod io_buff;
+
 pub(crate) mod facade {
     use std::{os::unix::prelude::OpenOptionsExt, path::PathBuf};
 
     use photonio::fs::{File, OpenOptions};
 
-    use super::{file_builder::logical_block_size, file_reader::MetaReader, *};
+    use super::{file_reader::MetaReader, io_buff::logical_block_size, *};
     use crate::page_store::Result;
 
     /// The facade for page_file module.

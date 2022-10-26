@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use photonio::io::{ReadAt, ReadAtExt};
 
-use super::{file_builder::*, types::FileMeta};
+use super::{file_builder::*, io_buff::*, types::FileMeta};
 use crate::page_store::{Error, Result};
 
 pub(crate) struct PageFileReader<R: ReadAt> {

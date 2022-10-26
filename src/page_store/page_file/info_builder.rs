@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use photonio::fs::File;
 
 use super::{
-    file_builder::logical_block_size, file_reader::MetaReader, types::split_page_addr, FileInfo,
+    file_reader::MetaReader, io_buff::logical_block_size, types::split_page_addr, FileInfo,
     PageFileReader,
 };
 use crate::page_store::Result;
