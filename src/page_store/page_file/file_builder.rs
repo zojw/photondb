@@ -1,6 +1,7 @@
 use std::{
     alloc::Layout,
     collections::{BTreeMap, BTreeSet},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -40,8 +41,15 @@ pub(crate) struct FileBuilder {
 
 impl FileBuilder {
     /// Create new file builder for given writer.
-    pub(crate) fn new(file_id: u32, file: File, use_direct: bool, block_size: usize) -> Self {
-        let writer = BufferedWriter::new(file, IO_BUFFER_SIZE, use_direct, block_size);
+    pub(crate) fn new(
+        file_id: u32,
+        file: File,
+        use_direct: bool,
+        block_size: usize,
+        alloc: Rc<IoBufferAllocator>,
+    ) -> Self {
+        let writer =
+            BufferedWriter::new(file, IO_BUFFER_SIZE, use_direct, block_size, alloc.clone());
         Self {
             file_id,
             writer,
@@ -442,13 +450,19 @@ struct BufferedWriter {
     actual_data_size: usize,
 
     align_size: usize,
-    buffer: AlignBuffer,
+    buffer: IoBuffer,
     buf_pos: usize,
 }
 
 impl BufferedWriter {
-    fn new(file: File, io_batch_size: usize, use_direct: bool, align_size: usize) -> Self {
-        let buffer = AlignBuffer::new(io_batch_size, align_size);
+    fn new(
+        file: File,
+        io_batch_size: usize,
+        use_direct: bool,
+        align_size: usize,
+        alloc: Rc<IoBufferAllocator>,
+    ) -> Self {
+        let buffer = alloc.alloc_buffer(io_batch_size, align_size);
         Self {
             file,
             use_direct,
@@ -533,7 +547,8 @@ mod tests {
                 .open(path1.to_owned())
                 .await
                 .expect("open file_id: {file_id}'s file fail");
-            let mut bw1 = BufferedWriter::new(file1, 4096 + 1, use_direct, 512);
+            let alloc = Rc::new(IoBufferAllocator::new(10 << 20));
+            let mut bw1 = BufferedWriter::new(file1, 4096 + 1, use_direct, 512, alloc.clone());
             bw1.write(&[1].repeat(10)).await.unwrap(); // only fill buffer
             bw1.write(&[2].repeat(4096 * 2 + 1)).await.unwrap(); // trigger flush
             bw1.write(&[3].repeat(4096 * 2 + 1)).await.unwrap(); // trigger flush

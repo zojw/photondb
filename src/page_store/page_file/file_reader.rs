@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{alloc::alloc, collections::BTreeMap, rc::Rc, sync::Arc};
 
 use photonio::io::{ReadAt, ReadAtExt};
 
@@ -9,15 +9,22 @@ pub(crate) struct PageFileReader<R: ReadAt> {
     reader: R,
     use_direct: bool,
     align_size: usize,
+    alloc: Rc<IoBufferAllocator>,
 }
 
 impl<R: ReadAt> PageFileReader<R> {
     /// Open page reader.
-    pub(super) fn from(reader: R, use_direct: bool, align_size: usize) -> Self {
+    pub(super) fn from(
+        reader: R,
+        use_direct: bool,
+        align_size: usize,
+        alloc: Rc<IoBufferAllocator>,
+    ) -> Self {
         Self {
             reader,
             use_direct,
             align_size,
+            alloc,
         }
     }
 
@@ -36,8 +43,8 @@ impl<R: ReadAt> PageFileReader<R> {
         let align_buf_size =
             ceil_to_block_hi_pos(req_offset as usize + buf.len(), self.align_size) - align_offset;
 
-        let mut align_buf = AlignBuffer::new(align_buf_size, self.align_size); // TODO: pool this buf?
-        let mut read_buf = align_buf.as_bytes_mut();
+        let mut align_buf = self.alloc.alloc_buffer(align_buf_size, self.align_size); // TODO: pool this buf?
+        let read_buf = align_buf.as_bytes_mut();
 
         self.inner_read_exact_at(&self.reader, read_buf, align_offset as u64)
             .await

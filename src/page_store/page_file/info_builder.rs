@@ -1,25 +1,34 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, rc::Rc};
 
 use photonio::fs::File;
 
 use super::{
-    file_reader::MetaReader, io_buff::logical_block_size, types::split_page_addr, FileInfo,
-    PageFileReader,
+    file_reader::MetaReader,
+    io_buff::{logical_block_size, IoBufferAllocator},
+    types::split_page_addr,
+    FileInfo, PageFileReader,
 };
 use crate::page_store::Result;
 
 pub(crate) struct FileInfoBuilder {
     base: PathBuf,
     file_prefix: String,
+
+    alloc: Rc<IoBufferAllocator>,
 }
 
 impl FileInfoBuilder {
     /// Create file info builder.
     /// it need base dir and page file name prefix.
-    pub(crate) fn new(base: impl Into<PathBuf>, file_prefix: &str) -> Self {
+    pub(crate) fn new(
+        base: impl Into<PathBuf>,
+        file_prefix: &str,
+        alloc: Rc<IoBufferAllocator>,
+    ) -> Self {
         Self {
             base: base.into(),
             file_prefix: file_prefix.into(),
+            alloc,
         }
     }
 
@@ -101,7 +110,7 @@ impl FileInfoBuilder {
         let raw_metadata = raw_file.metadata().await.expect("read file metadata file");
         let block_size = logical_block_size(&raw_metadata).await;
         MetaReader::open(
-            PageFileReader::from(raw_file, false, block_size),
+            PageFileReader::from(raw_file, false, block_size, self.alloc.clone()),
             raw_metadata.len() as u32,
             *file_id,
         )

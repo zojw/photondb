@@ -14,11 +14,15 @@ pub(crate) use types::{FileInfo, FileMeta, PageHandle};
 mod io_buff;
 
 pub(crate) mod facade {
-    use std::{os::unix::prelude::OpenOptionsExt, path::PathBuf};
+    use std::{os::unix::prelude::OpenOptionsExt, path::PathBuf, rc::Rc};
 
     use photonio::fs::{File, OpenOptions};
 
-    use super::{file_reader::MetaReader, io_buff::logical_block_size, *};
+    use super::{
+        file_reader::MetaReader,
+        io_buff::{logical_block_size, IoBufferAllocator},
+        *,
+    };
     use crate::page_store::Result;
 
     /// The facade for page_file module.
@@ -28,16 +32,20 @@ pub(crate) mod facade {
 
         file_prefix: String,
         use_direct: bool,
+
+        alloc: Rc<IoBufferAllocator>,
     }
 
     impl PageFiles {
         /// Create page file facade.
         /// It should be a singleton in the page_store.
         pub(crate) fn new(base: impl Into<PathBuf>, file_prefile: &str) -> Self {
+            let alloc = Rc::new(IoBufferAllocator::new(10 << 20));
             Self {
                 base: base.into(),
                 file_prefix: file_prefile.into(),
                 use_direct: true,
+                alloc,
             }
         }
 
@@ -61,6 +69,7 @@ pub(crate) mod facade {
                 writer,
                 self.use_direct,
                 block_size,
+                self.alloc.clone(),
             ))
         }
 
@@ -96,12 +105,17 @@ pub(crate) mod facade {
                 .open(path)
                 .await
                 .expect("open reader for file_id: {file_id} fail");
-            Ok(PageFileReader::from(file, self.use_direct, block_size))
+            Ok(PageFileReader::from(
+                file,
+                self.use_direct,
+                block_size,
+                self.alloc.clone(),
+            ))
         }
 
         // Create info_builder to help recovery & mantains version's file_info.
         pub(crate) fn new_info_builder(&self) -> FileInfoBuilder {
-            FileInfoBuilder::new(self.base.to_owned(), &self.file_prefix)
+            FileInfoBuilder::new(self.base.to_owned(), &self.file_prefix, self.alloc.clone())
         }
 
         pub(crate) async fn open_meta_reader(&self, file_id: u32) -> Result<MetaReader<File>> {
@@ -111,7 +125,7 @@ pub(crate) mod facade {
                 .expect("open reader for file_id: {file_id} fail");
             let raw_metadata = file.metadata().await.expect("read fs metadata fail");
             let block_size = logical_block_size(&raw_metadata).await;
-            let page_file_reader = PageFileReader::from(file, true, block_size);
+            let page_file_reader = PageFileReader::from(file, true, block_size, self.alloc.clone());
             MetaReader::open(page_file_reader, raw_metadata.len() as u32, file_id).await
         }
 
