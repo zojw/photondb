@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{env::Env, Options};
+use crate::{env::Env, tree::PageRewriter, Options};
 
 mod error;
 pub(crate) use error::{Error, Result};
@@ -38,6 +38,8 @@ pub(crate) use page_file::{FileInfo, PageFiles};
 mod recover;
 mod strategy;
 pub(crate) use strategy::{MinDeclineRateStrategyBuilder, StrategyBuilder};
+
+use self::jobs::gc::GcCtx;
 
 pub(crate) struct PageStore<E: Env>
 where
@@ -103,19 +105,21 @@ impl<E: Env> PageStore<E> {
     }
 }
 
-pub(crate) struct JobHandle {
+pub(crate) struct JobHandle<E: Env> {
     flush_task: Option<BoxFuture<'static, ()>>,
     cleanup_task: Option<BoxFuture<'static, ()>>,
     gc_task: Option<BoxFuture<'static, ()>>,
+
+    env: E,
 }
 
-impl JobHandle {
-    pub(crate) fn new<E: Env>(
+impl<E: Env> JobHandle<E> {
+    pub(crate) fn new(
         env: E,
         page_store: &PageStore<E>,
-        rewriter: Arc<dyn RewritePage>,
+        rewriter: PageRewriter<E>,
         strategy_builder: Box<dyn StrategyBuilder>,
-    ) -> JobHandle {
+    ) -> Self {
         use self::jobs::{cleanup::CleanupCtx, flush::FlushCtx, gc::GcCtx};
 
         let page_files = page_store.page_files.clone();
@@ -139,15 +143,16 @@ impl JobHandle {
             gc_ctx.run(global_version).await;
         });
 
-        JobHandle {
+        Self {
+            env,
             flush_task: Some(flush_task),
             cleanup_task: Some(cleanup_task),
-            gc_task: Some(gc_task),
+            gc_task: None,
         }
     }
 }
 
-impl Drop for JobHandle {
+impl<E: Env> Drop for JobHandle<E> {
     fn drop(&mut self) {
         futures::executor::block_on(async {
             if let Some(task) = self.flush_task.take() {

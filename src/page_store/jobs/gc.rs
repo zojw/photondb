@@ -2,7 +2,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use async_trait::async_trait;
 
-use crate::page_store::{FileInfo, PageFiles, Result, StrategyBuilder, Version};
+use crate::{page_store::{FileInfo, PageFiles, Result, StrategyBuilder, Version}, env::Env, tree::PageRewriter};
 
 /// An abstraction describes how to move pages to the end of page files.
 #[async_trait]
@@ -11,9 +11,9 @@ pub(crate) trait RewritePage: Send + Sync {
     async fn rewrite(&self, page_id: u64) -> Result<()>;
 }
 
-pub(crate) struct GcCtx {
+pub(crate) struct GcCtx<E: Env> {
     // TODO: cancel task
-    rewriter: Arc<dyn RewritePage>,
+    rewriter: PageRewriter<E>,
     strategy_builder: Box<dyn StrategyBuilder>,
     #[allow(unused)]
     page_files: Arc<PageFiles>,
@@ -21,9 +21,9 @@ pub(crate) struct GcCtx {
     cleaned_files: HashSet<u32>,
 }
 
-impl GcCtx {
+impl <E: Env> GcCtx<E> {
     pub(crate) fn new(
-        rewriter: Arc<dyn RewritePage>,
+        rewriter: PageRewriter<E>,
         strategy_builder: Box<dyn StrategyBuilder>,
         page_files: Arc<PageFiles>,
     ) -> Self {
