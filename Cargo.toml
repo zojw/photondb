@@ -25,6 +25,9 @@ bytes = "1.2.1"
 libc = "0.2.137"
 moka = { version = "0.9", features = ["future"] }
 
+[dev-dependencies]
+rand = { version = "0.8.5", features = ["small_rng"] }
+
 [profile.bench]
 debug = true
 
