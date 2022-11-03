@@ -52,7 +52,11 @@ mod util;
 
 #[cfg(test)]
 mod tests {
-    use ::std::env::temp_dir;
+    use ::std::{
+        env::temp_dir,
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::*;
 
@@ -87,5 +91,44 @@ mod tests {
             })
             .unwrap();
         table.close();
+    }
+
+    #[photonio::test]
+    async fn buf_install_not_successor() {
+        use rand::{rngs::SmallRng, Rng, SeedableRng};
+
+        use crate::env::Env;
+        let fill_rang = |rng: &mut SmallRng, buf: &mut [u8]| {
+            rng.fill(buf);
+        };
+        let env = crate::env::Photon;
+        let path = temp_dir();
+        let table = Arc::new(Table::open(path, Options::default()).await.unwrap());
+        let base_seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+
+        let mut handles = Vec::new();
+        for tid in 0..2 {
+            let tid = tid.to_owned();
+            let seed = base_seed + tid;
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let table = table.clone();
+            let h = env.spawn_background(async move {
+                for _ in 0..10000 {
+                    let mut key = vec![0u8; 16];
+                    let mut value = vec![0u8; 100];
+                    fill_rang(&mut rng, &mut key);
+                    fill_rang(&mut rng, &mut value);
+                    table.put(&key, 0, &value).await.unwrap();
+                    println!("put in {tid}");
+                }
+            });
+            handles.push(h)
+        }
+        for h in handles {
+            h.await;
+        }
     }
 }
