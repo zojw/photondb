@@ -201,25 +201,25 @@ pub struct Metadata {
     pub is_dir: bool,
 }
 
-#[cfg(target_os = "linux")]
-pub(in crate::env) fn direct_io_ify(fd: i32) -> Result<()> {
-    macro_rules! syscall {
-            ($fn: ident ( $($arg: expr),* $(,)* ) ) => {{
-                #[allow(unused_unsafe)]
-                let res = unsafe { libc::$fn($($arg, )*) };
-                if res == -1 {
-                    Err(std::io::Error::last_os_error())
-                } else {
-                    Ok(res)
-                }
-            }};
-        }
-    let flags = syscall!(fcntl(fd, libc::F_GETFL))?;
-    syscall!(fcntl(fd, libc::F_SETFL, flags | libc::O_DIRECT))?;
-    Ok(())
-}
+// #[cfg(target_os = "linux")]
+// pub(in crate::env) fn direct_io_ify(fd: i32) -> Result<()> {
+//     macro_rules! syscall {
+//             ($fn: ident ( $($arg: expr),* $(,)* ) ) => {{
+//                 #[allow(unused_unsafe)]
+//                 let res = unsafe { libc::$fn($($arg, )*) };
+//                 if res == -1 {
+//                     Err(std::io::Error::last_os_error())
+//                 } else {
+//                     Ok(res)
+//                 }
+//             }};
+//         }
+//     let flags = syscall!(fcntl(fd, libc::F_GETFL))?;
+//     syscall!(fcntl(fd, libc::F_SETFL, flags | libc::O_DIRECT))?;
+//     Ok(())
+// }
 
-#[cfg(not(target_os = "linux"))]
+// #[cfg(not(target_os = "linux"))]
 pub(in crate::env) fn direct_io_ify(_: i32) -> Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,

@@ -52,6 +52,9 @@ mod util;
 
 #[cfg(test)]
 mod tests {
+    use ::std::{env::temp_dir, sync::Arc};
+
+    use libc::rand;
     use tempdir::TempDir;
 
     use super::*;
@@ -91,5 +94,53 @@ mod tests {
         for i in 0..N {
             must_get(&table, i, i, Some(i)).await;
         }
+    }
+
+    #[photonio::test]
+    async fn buf_install_not_successor() {
+        use rand::{
+            distributions::{Alphanumeric, DistString},
+            rngs::SmallRng,
+            Rng, SeedableRng,
+        };
+
+        use crate::env::Env;
+        let fill_rang = |rng: &mut SmallRng, buf: &mut [u8]| {
+            rng.fill(buf);
+        };
+
+        let env = crate::env::Photon;
+        let rand_dir = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
+        let path = temp_dir().join(rand_dir).join("abc");
+        let table = Arc::new(
+            crate::raw::Table::open(env.to_owned(), path, Options::default())
+                .await
+                .unwrap(),
+        );
+        let base_seed = 1667446555451976;
+
+        let mut handles = Vec::new();
+        for tid in 0..1 {
+            let tid = tid.to_owned();
+            let seed = base_seed + tid;
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let table = table.clone();
+            let h = env.spawn_background(async move {
+                for _ in 0..100000 {
+                    let mut key = vec![0u8; 16];
+                    let mut value = vec![0u8; 100];
+                    fill_rang(&mut rng, &mut key);
+                    fill_rang(&mut rng, &mut value);
+                    table.put(&key, 0, &value).await.unwrap();
+                }
+            });
+            handles.push(h)
+        }
+        env.spawn_background(async {
+            for handle in handles {
+                handle.await;
+            }
+        })
+        .await;
     }
 }
