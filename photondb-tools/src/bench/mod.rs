@@ -5,8 +5,13 @@ use clap::{Parser, ValueEnum};
 
 mod error;
 pub(crate) use error::Result;
+use photondb::env::Photon;
 
-mod benchmark;
+use self::{store::*, workloads::Workloads};
+
+mod store;
+mod util;
+mod workloads;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(about = "Start bench testing")]
@@ -137,12 +142,14 @@ impl From<&str> for BenchmarkType {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum StoreType {
     Photon,
+    Sled,
 }
 
 impl fmt::Display for StoreType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             StoreType::Photon => "photon",
+            StoreType::Sled => "sled",
         })
     }
 }
@@ -163,6 +170,14 @@ impl fmt::Display for ValueSizeDistributionType {
 }
 
 pub(crate) async fn run(config: Args) -> Result<()> {
-    let mut bench = benchmark::Benchmark::new(config);
-    bench.run().await
+    match config.store_type {
+        StoreType::Photon => run_store::<PhotondbStore>(config).await,
+        StoreType::Sled => run_store::<SeldStore>(config).await,
+    }
+}
+
+async fn run_store<E: Store>(config: Args) -> Result<()> {
+    let (config, env) = (config.to_owned(), Photon);
+    let mut bench = Workloads::<E>::prepare(config, env).await;
+    bench.execute().await
 }

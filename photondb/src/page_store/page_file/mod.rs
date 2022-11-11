@@ -17,7 +17,7 @@ pub(crate) mod constant {
     // like: https://github.com/DataDog/glommio/issues/7 or https://github.com/facebook/rocksdb/pull/1875
     pub(crate) const DEFAULT_BLOCK_SIZE: usize = 4096;
 
-    pub(crate) const IO_BUFFER_SIZE: usize = 4096 * 4;
+    pub(crate) const IO_BUFFER_SIZE: usize = 4 << 20;
 
     pub(crate) const MAX_OPEN_READER_FD_NUM: u64 = 1000;
 }
