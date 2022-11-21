@@ -5,7 +5,7 @@ pub use table::{Guard, Pages, Table};
 
 #[cfg(test)]
 mod tree_test {
-    use ::std::collections::BTreeMap;
+    use ::std::{collections::BTreeMap, path::Path};
     use quickcheck::*;
     use rand_distr::*;
 
@@ -15,7 +15,8 @@ mod tree_test {
     #[ignore]
     async fn btreemap_cmp_test() {
         let f = |ops| {
-            if let Err(e) = prop_cmp_btreemap(ops) {
+            let path = ::std::env::temp_dir().join("cmp_test");
+            if let Err(e) = prop_cmp_btreemap(ops, &path) {
                 eprintln!("check fail: {:?}", e);
                 false
             } else {
@@ -105,9 +106,10 @@ mod tree_test {
         }
     }
 
-    fn prop_cmp_btreemap(ops: Vec<Op>) -> Result<()> {
-        let path = tempdir::TempDir::new("prop_cmp_btreemap").unwrap();
-        let mut table = std::Table::open(path.path(), TableOptions::default())?;
+    fn prop_cmp_btreemap(ops: Vec<Op>, path: impl AsRef<Path>) -> Result<()> {
+        let mut table_opt = TableOptions::default();
+        table_opt.page_store.write_buffer_capacity = 16 << 10;
+        let mut table = std::Table::open(path.as_ref(), table_opt)?;
         let mut treemap: BTreeMap<Key, u16> = BTreeMap::new();
 
         let mut lsn = 0;
@@ -145,7 +147,7 @@ mod tree_test {
                 }
                 Op::Restart => {
                     table.close().unwrap();
-                    table = std::Table::open(path.path(), TableOptions::default())?;
+                    table = std::Table::open(path.as_ref(), TableOptions::default())?;
                 }
             }
         }

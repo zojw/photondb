@@ -39,6 +39,7 @@ mod strategy;
 pub(crate) use strategy::{MinDeclineRateStrategyBuilder, StrategyBuilder};
 
 mod cache;
+pub(crate) use cache::{clock::ClockCache, Cache};
 /// Options to configure a page store.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
