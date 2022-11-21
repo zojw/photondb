@@ -1,5 +1,6 @@
 use std::{io::ErrorKind, path::PathBuf};
 
+use log::info;
 use prost::Message;
 
 use super::{meta::VersionEdit, Error};
@@ -105,6 +106,7 @@ impl<E: Env> Manifest<E> {
                 current_file_size: 0,
                 current_writer,
             });
+            info!("roll manifest to {path:?}");
             Some(path)
         } else {
             None
@@ -140,6 +142,7 @@ impl<E: Env> Manifest<E> {
                 .await
                 .expect("sync new manifest file fail");
             self.set_current(file_num).await?;
+            info!("set manifest to {file_num}");
             // TODO: notify cleaner previous manifest + size, so it can be delete when need.
             self.current_file_num = Some(file_num);
         } else {
@@ -168,7 +171,7 @@ impl<E: Env> Manifest<E> {
                 .env
                 .open_positional_reader(path)
                 .await
-                .expect("open manifest fail");
+                .expect(&format!("open manifest fail {current_file}"));
             let mut decoder = VersionEditDecoder::new(reader);
             let mut ves = Vec::new();
             while let Some(ve) = decoder.next_record().await.expect("manifest decode error") {
@@ -275,6 +278,10 @@ impl<E: Env> Manifest<E> {
                 file_path.file_name().unwrap().to_str().unwrap(),
                 self.current_file_num,
             ) {
+                info!(
+                    "clean obsolete manifest: {file_path:?} , {:?}",
+                    self.current_file_num
+                );
                 wait_remove_paths.push(file_path.to_owned());
             }
         }

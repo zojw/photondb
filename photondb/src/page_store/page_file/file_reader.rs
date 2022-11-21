@@ -28,6 +28,7 @@ impl<R: PositionalReader> PageFileReader<R> {
     /// Reads the exact number of bytes from the page specified by `offset`.
     pub(crate) async fn read_exact_at(&self, buf: &mut [u8], req_offset: u64) -> Result<()> {
         if !self.use_direct {
+            assert!(buf.len() > 0);
             self.reader
                 .read_exact_at(buf, req_offset)
                 .await
@@ -130,6 +131,9 @@ impl<R: PositionalReader> MetaReader<R> {
     /// Returns the delete page addrs in the file.
     pub(crate) async fn read_delete_pages(&self) -> Result<Vec<u64> /* delete page addrs */> {
         let (del_offset, del_len) = self.file_meta.get_delete_pages_meta_page()?;
+        if del_len == 0 {
+            return Ok(Vec::new());
+        }
         let mut buf = vec![0u8; del_len];
         self.reader
             .read_exact_at(&mut buf, del_offset)
@@ -160,10 +164,15 @@ impl<R: PositionalReader> MetaReader<R> {
     }
 
     async fn read_index_block(read: &PageFileReader<R>, footer: &Footer) -> Result<IndexBlock> {
-        let mut data_idx_bytes = vec![0u8; footer.data_handle.length as usize];
-        read.read_exact_at(&mut data_idx_bytes, footer.data_handle.offset)
-            .await
-            .expect("read data page index fail");
+        let data_idx_bytes = if footer.data_handle.length == 0 {
+            Vec::new()
+        } else {
+            let mut data_idx_bytes = vec![0u8; footer.data_handle.length as usize];
+            read.read_exact_at(&mut data_idx_bytes, footer.data_handle.offset)
+                .await
+                .expect("read data page index fail");
+            data_idx_bytes
+        };
 
         let mut meta_idx_bytes = vec![0u8; footer.meta_handle.length as usize];
         read.read_exact_at(&mut meta_idx_bytes, footer.meta_handle.offset)

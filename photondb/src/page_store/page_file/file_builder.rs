@@ -5,6 +5,8 @@ use std::{
     sync::Arc,
 };
 
+use log::info;
+
 use super::{constant::*, types::split_page_addr, FileInfo, FileMeta};
 use crate::{
     env::{Directory, Env, SequentialWriter, SequentialWriterExt},
@@ -80,6 +82,7 @@ impl<'a, E: Env> FileBuilder<'a, E> {
         self.finish_meta_block().await?;
         let info = self.finish_file_footer().await?;
         self.writer.flush_and_sync().await?;
+        info!("finish flush file: {}", info.get_file_id());
         Ok(info)
     }
 }
@@ -633,7 +636,7 @@ mod tests {
 
         let env = crate::env::Photon;
 
-        let use_direct = true;
+        let use_direct = false;
         let base_dir = TempDir::new("buffer_writer").unwrap();
         let path1 = base_dir.path().join("buf_test1");
         let base = env.open_dir(base_dir.path()).await.unwrap();
