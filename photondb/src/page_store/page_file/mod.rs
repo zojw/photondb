@@ -432,6 +432,10 @@ pub(crate) mod facade {
                 let hd = file2.get_page_handle(page_addr(2, 4)).unwrap();
                 assert_eq!(hd.size, 10);
                 assert_eq!(hd.offset, 20);
+
+                let meta_reader = files.open_meta_reader(3).await.unwrap();
+                let page_table = meta_reader.read_page_table().await.unwrap();
+                assert!(page_table.is_empty())
             }
         }
 

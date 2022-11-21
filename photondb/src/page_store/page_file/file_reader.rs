@@ -119,11 +119,16 @@ impl<R: PositionalReader> MetaReader<R> {
     /// Returns the page table in the file.
     pub(crate) async fn read_page_table(&self) -> Result<BTreeMap<u64, u64>> {
         let (page_table_offset, page_table_len) = self.file_meta.get_page_table_meta_page()?;
-        let mut buf = vec![0u8; page_table_len];
-        self.reader
-            .read_exact_at(&mut buf, page_table_offset)
-            .await
-            .expect("read page table meta page fail");
+        let buf = if page_table_len == 0 {
+            vec![]
+        } else {
+            let mut buf = vec![0u8; page_table_len];
+            self.reader
+                .read_exact_at(&mut buf, page_table_offset)
+                .await
+                .expect("read page table meta page fail");
+            buf
+        };
         let table = PageTable::decode(&buf)?;
         Ok(table.into())
     }
