@@ -121,7 +121,7 @@ impl<E: Env> FileInfoBuilder<E> {
             .env
             .metadata(path.to_owned())
             .await
-            .expect("read file metadata file");
+            .unwrap_or_else(|_| panic!("read file metadata file {} fail", file_id));
         let raw_file = self
             .env
             .open_positional_reader(&path)
