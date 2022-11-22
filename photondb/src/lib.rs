@@ -63,7 +63,7 @@ mod tests {
         page_size: 64,
         page_chain_length: 2,
         page_store: PageStoreOptions {
-            write_buffer_capacity: 1 << 20,
+            write_buffer_capacity: 1 << 10,
             max_write_buffers: 8,
             use_direct_io: false,
             max_space_amplification_percent: 10,
@@ -84,28 +84,25 @@ mod tests {
 
     #[photonio::test]
     async fn crud() {
+        env_logger::init();
+
+        const OPTIONS: TableOptions = TableOptions {
+            page_size: 64,
+            page_chain_length: 2,
+            page_store: PageStoreOptions {
+                write_buffer_capacity: 1 << 10,
+                max_write_buffers: 8,
+                use_direct_io: false,
+                max_space_amplification_percent: 10,
+                space_used_high: u64::MAX,
+            },
+        };
+
         let path = tempdir().unwrap();
         let table = Table::open(&path, OPTIONS).await.unwrap();
-        const N: u64 = 1 << 10;
-        for i in 0..N {
-            must_put(&table, i, i).await;
-            must_get(&table, i, i, Some(i)).await;
-        }
-        for i in 0..N {
-            must_get(&table, i, i, Some(i)).await;
-        }
 
-        let guard = table.pin();
-        let mut pages = guard.pages();
-        let mut i = 0u64;
-        while let Some(page) = pages.next().await.unwrap() {
-            for (k, v) in page {
-                assert_eq!(k, &i.to_be_bytes());
-                assert_eq!(v, &i.to_be_bytes());
-                i += 1;
-            }
-        }
-        assert_eq!(i, N);
+        let buf = 1u8.to_be_bytes().repeat(2048);
+        table.put(&buf, 0, &buf).await.unwrap();
 
         table.close().await.unwrap();
     }
