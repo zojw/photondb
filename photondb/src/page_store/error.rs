@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub(crate) enum Error {
+pub enum Error {
     #[error("Again")]
     Again,
     #[error("Corrupted")]
@@ -15,4 +15,4 @@ pub(crate) enum Error {
     Io(#[from] std::io::Error),
 }
 
-pub(crate) type Result<T, E = Error> = std::result::Result<T, E>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;

@@ -3,7 +3,7 @@ use std::{fmt, mem, path::Path, sync::Arc};
 use crate::{env::Env, util::shutdown::ShutdownNotifier};
 
 mod error;
-pub(crate) use error::{Error, Result};
+pub use error::{Error, Result};
 
 mod page_txn;
 use futures::lock::Mutex;
@@ -39,7 +39,7 @@ mod strategy;
 pub(crate) use strategy::{MinDeclineRateStrategyBuilder, StrategyBuilder};
 
 mod cache;
-pub(crate) use cache::{clock::ClockCache, Cache, CacheEntry};
+pub use cache::{clock::ClockCache, Cache, CacheEntry};
 /// Options to configure a page store.
 #[non_exhaustive]
 #[derive(Clone, Debug)]

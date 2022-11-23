@@ -47,7 +47,7 @@ mod tree;
 pub use tree::{Options as TableOptions, PageIter, ReadOptions, Stats, WriteOptions};
 
 mod page_store;
-pub use page_store::Options as PageStoreOptions;
+pub use page_store::{Cache, CacheEntry, ClockCache, Options as PageStoreOptions};
 
 mod page;
 mod util;

@@ -5,7 +5,7 @@ use ::std::sync::{
 
 use crate::page_store::{Error, Result};
 
-pub(crate) trait Cache<T: Clone>: Sized {
+pub trait Cache<T: Clone>: Sized {
     fn insert(
         self: &Arc<Self>,
         key: u64,
@@ -20,7 +20,7 @@ pub(crate) trait Cache<T: Clone>: Sized {
     fn erase(self: &Arc<Self>, key: u64);
 }
 
-pub(crate) struct CacheEntry<T, C>
+pub struct CacheEntry<T, C>
 where
     T: Clone,
     C: Cache<T>,
@@ -59,17 +59,17 @@ where
     C: Cache<T>,
 {
     #[allow(dead_code)]
-    pub(crate) fn key(&self) -> u64 {
+    pub fn key(&self) -> u64 {
         unsafe { (*self.handle).key }
     }
 
-    pub(crate) fn value(&self) -> &T {
+    pub fn value(&self) -> &T {
         unsafe { (*self.handle).value.as_ref().unwrap() }
     }
 }
 
 #[repr(align(64))]
-pub(crate) struct Handle<T: Clone> {
+pub struct Handle<T: Clone> {
     key: u64,
     hash: u32, // TODO: cmp with bijective hash algorithm to save hash into key.
     value: Option<T>,
@@ -159,7 +159,7 @@ pub(crate) mod clock {
     const LOAD_FACTOR: f64 = 0.7;
     const STRICT_LOAD_FACTOR: f64 = 0.84;
 
-    pub(crate) struct ClockCache<T: Clone> {
+    pub struct ClockCache<T: Clone> {
         shards: Vec<ClockCacheShard<T>>,
         shard_mask: u32,
     }
@@ -845,7 +845,7 @@ pub(crate) mod clock {
     }
 
     impl<T: Clone> ClockCache<T> {
-        pub(crate) fn new(
+        pub fn new(
             capacity: usize,
             est_value_size: usize,
             num_shard_bits: i32,
