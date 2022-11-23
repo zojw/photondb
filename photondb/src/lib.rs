@@ -70,6 +70,7 @@ mod tests {
             space_used_high: u64::MAX,
             cache_capacity: 2 << 10,
             cache_estimated_entry_charge: 1,
+            prepopulate_cache_on_flush: true,
         },
     };
 
