@@ -684,10 +684,10 @@ pub(crate) mod clock {
             abort_fn: impl Fn(&ClockHandlePtr<T>) -> bool,
             update_fn: impl Fn(&ClockHandlePtr<T>),
         ) -> (Option<usize>, u32) {
-            let mut probe = 0;
+            let mut probe = 0u32;
             let base = self.mod_table_size(Self::remix1(hash));
             let increment = Self::remix2(hash) | 1;
-            let mut current = self.mod_table_size(base.wrapping_add(probe * increment));
+            let mut current = self.mod_table_size(base.wrapping_add(probe.wrapping_mul(increment)));
             while probe <= self.length_bits_mask {
                 let h = self.handles.get(current as usize).unwrap();
                 if match_fn(h) {
