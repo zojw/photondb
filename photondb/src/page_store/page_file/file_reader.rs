@@ -1,6 +1,12 @@
-use std::{collections::BTreeMap, marker::PhantomData, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    marker::PhantomData,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-use futures::Future;
+use futures::{task::noop_waker_ref, Future};
 
 use super::{file_builder::*, types::FileMeta, FileId};
 use crate::{
@@ -56,6 +62,11 @@ impl<R: PositionalReader> CommonFileReader<R> {
         Ok(())
     }
 
+    async fn spawn_read(r: R, buf: &'static mut [u8], pos: u64) -> Result<usize> {
+        let s = photonio::task::spawn_blocking(|| poll(r.read_at(buf, pos))).await.unwrap()?;
+        Ok(s)
+    }
+
     async fn inner_read_exact_at(
         &self,
         r: &R,
@@ -80,12 +91,46 @@ impl<R: PositionalReader> CommonFileReader<R> {
             }
         }
         Ok(())
+
+          // assert!(is_block_aligned_ptr(buf.as_ptr(), self.align_size));
+        // assert!(is_block_aligned_pos(pos as usize, self.align_size));
+        // while !buf.is_empty() {
+        //     match photonio::task::spawn_blocking(|| poll(r.read_at(buf, pos)))
+        //         .await
+        //         .unwrap()
+        //     {
+        //         Ok(0) => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+        //         Ok(n) => {
+        //             buf = &mut buf[n..];
+        //             pos += n as u64;
+        //             if !is_block_aligned_pos(n, self.align_size) {
+        //                 // only happen when end of file.
+        //                 break;
+        //             }
+        //         }
+        //         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+        //         Err(e) => return Err(e),
+        //     }
+        // }
+        // Ok(())
     }
 
     pub(crate) async fn read_block(&self, block_handle: BlockHandler) -> Result<Vec<u8>> {
         let mut buf = vec![0u8; block_handle.length as usize];
         self.read_exact_at(&mut buf, block_handle.offset).await?;
         Ok(buf)
+    }
+}
+
+fn poll<F: Future>(mut future: F) -> F::Output {
+    let cx = &mut Context::from_waker(noop_waker_ref());
+    loop {
+        // Safety: the future will block until completion, so it will never be moved.
+        let fut = unsafe { Pin::new_unchecked(&mut future) };
+        match fut.poll(cx) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => std::hint::spin_loop(),
+        }
     }
 }
 
