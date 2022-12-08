@@ -62,18 +62,22 @@ where
     /// # Panics
     ///
     /// Panics if the page is not large enough to hold the content.
-    pub(crate) fn build(mut self, page: &mut PageBuf<'_>) {
+    pub(crate) fn build(mut self, page: &mut PageBuf<'_>) -> usize {
         assert!(page.size() >= self.size());
         self.base.build(page);
         if let Some(iter) = self.iter.as_mut() {
             unsafe {
                 let mut buf = SortedPageBuf::new(page.content_mut(), self.num_items);
                 iter.rewind();
+                let mut moved = 0;
                 for (k, v) in iter {
+                    moved += 1;
                     buf.add(k, v);
                 }
+                return moved
             }
         }
+        0
     }
 }
 

@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use log::trace;
+use log::{debug, trace};
 
 use crate::{env::Env, page::*, page_store::*};
 
@@ -218,7 +218,7 @@ impl<'a, E: Env> TreeTxn<'a, E> {
     async fn find_leaf(&self, key: &[u8]) -> Result<(PageView<'_>, Option<PageView<'_>>)> {
         loop {
             match self.try_find_leaf(key).await {
-                Ok((view, parent)) => {
+                Ok((view, parent, seek_child)) => {
                     self.tree.stats.success.read.inc();
                     return Ok((view, parent));
                 }
@@ -231,11 +231,12 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         }
     }
 
-    async fn try_find_leaf(&self, key: &[u8]) -> Result<(PageView<'_>, Option<PageView<'_>>)> {
+    async fn try_find_leaf(&self, key: &[u8]) -> Result<(PageView<'_>, Option<PageView<'_>>, u32)> {
         // The index, range, and parent of the current page, starting from the root.
         let mut index = ROOT_INDEX;
         let mut range = ROOT_RANGE;
         let mut parent = None;
+        let mut lookup_child = 0;
         loop {
             let view = self.page_view(index.id, Some(range)).await?;
             // If the page epoch has changed, the page may not contain the data we expect
@@ -262,13 +263,14 @@ impl<'a, E: Env> TreeTxn<'a, E> {
                 return Err(Error::Again);
             }
             if view.page.tier().is_leaf() {
-                return Ok((view, parent));
+                return Ok((view, parent, lookup_child));
             }
             // Find the child page that may contain the key.
             let (child_index, child_range) = self
                 .find_child(key, &view)
                 .await?
                 .expect("child page must exist");
+            lookup_child += 1;
             index = child_index;
             range.start = child_range.start;
             // If the child has no range end, use the current one instead.
@@ -413,9 +415,25 @@ impl<'a, E: Env> TreeTxn<'a, E> {
             return Err(Error::InvalidArgument);
         }
         match view.page.tier() {
-            PageTier::Leaf => self.split_page_impl::<Key, Value>(view, parent).await,
-            PageTier::Inner => self.split_page_impl::<&[u8], Index>(view, parent).await,
+            PageTier::Leaf => self.split_page_leaf(view, parent).await,
+            PageTier::Inner => self.split_page_inner(view, parent).await,
         }
+    }
+
+    async fn split_page_inner(
+        &self,
+        view: PageView<'_>,
+        parent: Option<PageView<'_>>,
+    ) -> Result<()> {
+        self.split_page_impl::<&[u8], Index>(view, parent).await
+    }
+
+    async fn split_page_leaf(
+        &self,
+        view: PageView<'_>,
+        parent: Option<PageView<'_>>,
+    ) -> Result<()> {
+        self.split_page_impl::<Key, Value>(view, parent).await
     }
 
     async fn split_page_impl<K, V>(
@@ -593,21 +611,31 @@ impl<'a, E: Env> TreeTxn<'a, E> {
 
         // Try to consolidate the parent page if it is too long.
         if self.should_consolidate_page(parent.page) {
-            let _ = self.consolidate_page(parent).await;
+            // debug!("split try consolidate parent, p is {}", parent.id);
+            let _ = self.consolidate_page(parent, true).await;
         }
         Ok(())
     }
 
     /// Consolidates delta pages on the page chain.
-    async fn consolidate_page<'g>(&'g self, view: PageView<'g>) -> Result<PageView<'g>> {
+    async fn consolidate_page<'g>(
+        &'g self,
+        view: PageView<'g>,
+        split: bool,
+    ) -> Result<PageView<'g>> {
         match view.page.tier() {
             PageTier::Leaf => {
                 let safe_lsn = self.tree.safe_lsn();
-                self.consolidate_page_impl(view, |iter| MergingLeafPageIter::new(iter, safe_lsn))
-                    .await
+                self.consolidate_page_impl(
+                    view,
+                    |iter| MergingLeafPageIter::new(iter, safe_lsn),
+                    false,
+                    split,
+                )
+                .await
             }
             PageTier::Inner => {
-                self.consolidate_page_impl(view, MergingInnerPageIter::new)
+                self.consolidate_page_impl(view, MergingInnerPageIter::new, true, split)
                     .await
             }
         }
@@ -617,6 +645,8 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         &'g self,
         mut view: PageView<'g>,
         f: F,
+        inner: bool,
+        split: bool,
     ) -> Result<PageView<'g>>
     where
         F: Fn(MergingPageIter<'g, K, V>) -> I,
@@ -630,7 +660,13 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         let builder = SortedPageBuilder::new(view.page.tier(), PageKind::Data).with_iter(iter);
         let mut txn = self.guard.begin().await;
         let (new_addr, mut new_page) = txn.alloc_page(builder.size()).await?;
-        builder.build(&mut new_page);
+        let page_size = builder.build(&mut new_page);
+        if inner && split {
+            debug!(
+                "split consolidate, target node id: {}, new page size: {}",
+                view.id, page_size
+            );
+        }
         new_page.set_epoch(view.page.epoch());
         new_page.set_chain_len(info.last_page.chain_len());
         new_page.set_chain_next(info.last_page.chain_next());
@@ -707,7 +743,7 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         mut view: PageView<'g>,
         parent: Option<PageView<'g>>,
     ) -> Result<()> {
-        view = self.consolidate_page(view).await?;
+        view = self.consolidate_page(view, false).await?;
         // Try to split the page if it is too large.
         if self.should_split_page(view.page) {
             let _ = self.split_page(view, parent).await;
