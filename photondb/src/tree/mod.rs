@@ -188,7 +188,7 @@ impl<'a, E: Env> TreeTxn<'a, E> {
                     // the same. However, this doesn't work for the root
                     // because we split the root without updating its epoch.
                     if view.id != ROOT_ID {
-                        let page = self.guard.read_page(addr).await?;
+                        let page = self.guard.read_page(addr, AccessHint::READ_CACHE).await?;
                         if page.epoch() == view.page.epoch() {
                             txn = _txn;
                             view.addr = addr;
@@ -211,7 +211,7 @@ impl<'a, E: Env> TreeTxn<'a, E> {
     /// Returns a view to the page.
     async fn page_view<'g>(&'g self, id: u64, range: Option<Range<'g>>) -> Result<PageView<'g>> {
         let addr = self.guard.page_addr(id);
-        let page = self.guard.read_page(addr).await?;
+        let page = self.guard.read_page(addr, AccessHint::READ_CACHE).await?;
         Ok(PageView {
             id,
             addr,
@@ -296,6 +296,7 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         mut addr: u64,
         mut page: PageRef<'g>,
         mut f: F,
+        hint: AccessHint,
     ) -> Result<()>
     where
         F: FnMut(u64, PageRef<'g>) -> bool,
@@ -308,7 +309,7 @@ impl<'a, E: Env> TreeTxn<'a, E> {
             if addr == 0 {
                 return Ok(());
             }
-            page = self.guard.read_page(addr).await?;
+            page = self.guard.read_page(addr, hint).await?;
         }
     }
 
@@ -320,26 +321,31 @@ impl<'a, E: Env> TreeTxn<'a, E> {
     {
         let mut builder = MergingIterBuilder::with_capacity(view.page.chain_len() as usize);
         let mut range_limit = None;
-        self.walk_page(view.addr, view.page, |_, page| {
-            match page.kind() {
-                PageKind::Data => {
-                    builder.add(SortedPageIter::from(page));
-                }
-                PageKind::Split => {
-                    // The split key we first encountered must be the smallest.
-                    #[cfg(debug_assertions)]
-                    if let Some(range_limit) = range_limit {
-                        let (split_key, _) = split_delta_from_page(page);
-                        assert!(range_limit < split_key);
+        self.walk_page(
+            view.addr,
+            view.page,
+            |_, page| {
+                match page.kind() {
+                    PageKind::Data => {
+                        builder.add(SortedPageIter::from(page));
                     }
-                    if range_limit.is_none() {
-                        let (split_key, _) = split_delta_from_page(page);
-                        range_limit = Some(split_key);
+                    PageKind::Split => {
+                        // The split key we first encountered must be the smallest.
+                        #[cfg(debug_assertions)]
+                        if let Some(range_limit) = range_limit {
+                            let (split_key, _) = split_delta_from_page(page);
+                            assert!(range_limit < split_key);
+                        }
+                        if range_limit.is_none() {
+                            let (split_key, _) = split_delta_from_page(page);
+                            range_limit = Some(split_key);
+                        }
                     }
                 }
-            }
-            false
-        })
+                false
+            },
+            AccessHint::READ_CACHE,
+        )
         .await?;
         Ok(MergingPageIter::new(builder.build(), range_limit))
     }
@@ -351,27 +357,32 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         view: &PageView<'g>,
     ) -> Result<Option<&'g [u8]>> {
         let mut value = None;
-        self.walk_page(view.addr, view.page, |_, page| {
-            debug_assert!(page.tier().is_leaf());
-            // We only care about data pages here.
-            if page.kind().is_data() {
-                let page = ValuePageRef::from(page);
-                let index = match page.rank(key) {
-                    Ok(i) => i,
-                    Err(i) => i,
-                };
-                if let Some((k, v)) = page.get(index) {
-                    if k.raw == key.raw {
-                        debug_assert!(k.lsn <= key.lsn);
-                        if let Value::Put(v) = v {
-                            value = Some(v);
+        self.walk_page(
+            view.addr,
+            view.page,
+            |_, page| {
+                debug_assert!(page.tier().is_leaf());
+                // We only care about data pages here.
+                if page.kind().is_data() {
+                    let page = ValuePageRef::from(page);
+                    let index = match page.rank(key) {
+                        Ok(i) => i,
+                        Err(i) => i,
+                    };
+                    if let Some((k, v)) = page.get(index) {
+                        if k.raw == key.raw {
+                            debug_assert!(k.lsn <= key.lsn);
+                            if let Value::Put(v) = v {
+                                value = Some(v);
+                            }
+                            return true;
                         }
-                        return true;
                     }
                 }
-            }
-            false
-        })
+                false
+            },
+            AccessHint::READ_CACHE,
+        )
         .await?;
         Ok(value)
     }
@@ -385,31 +396,36 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         view: &PageView<'g>,
     ) -> Result<Option<(Index, Range<'g>)>> {
         let mut child = None;
-        self.walk_page(view.addr, view.page, |_, page| {
-            debug_assert!(page.tier().is_inner());
-            // We only care about data pages here.
-            if page.kind().is_data() {
-                let page = IndexPageRef::from(page);
-                // Find the two items that enclose the key.
-                let (left, right) = match page.rank(&key) {
-                    // The `i` item is equal to the key, so the range is [i, i + 1).
-                    Ok(i) => (page.get(i), i.checked_add(1).and_then(|i| page.get(i))),
-                    // The `i` item is greater than the key, so the range is [i - 1, i).
-                    Err(i) => (i.checked_sub(1).and_then(|i| page.get(i)), page.get(i)),
-                };
-                if let Some((start, index)) = left {
-                    if index != NULL_INDEX {
-                        let range = Range {
-                            start,
-                            end: right.map(|(end, _)| end),
-                        };
-                        child = Some((index, range));
-                        return true;
+        self.walk_page(
+            view.addr,
+            view.page,
+            |_, page| {
+                debug_assert!(page.tier().is_inner());
+                // We only care about data pages here.
+                if page.kind().is_data() {
+                    let page = IndexPageRef::from(page);
+                    // Find the two items that enclose the key.
+                    let (left, right) = match page.rank(&key) {
+                        // The `i` item is equal to the key, so the range is [i, i + 1).
+                        Ok(i) => (page.get(i), i.checked_add(1).and_then(|i| page.get(i))),
+                        // The `i` item is greater than the key, so the range is [i - 1, i).
+                        Err(i) => (i.checked_sub(1).and_then(|i| page.get(i)), page.get(i)),
+                    };
+                    if let Some((start, index)) = left {
+                        if index != NULL_INDEX {
+                            let range = Range {
+                                start,
+                                end: right.map(|(end, _)| end),
+                            };
+                            child = Some((index, range));
+                            return true;
+                        }
                     }
                 }
-            }
-            false
-        })
+                false
+            },
+            AccessHint::READ_CACHE,
+        )
         .await?;
         Ok(child)
     }
@@ -667,33 +683,39 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         let mut last_page = view.page;
         let mut page_addrs = Vec::with_capacity(chain_len);
         let mut range_limit = None;
-        self.walk_page(view.addr, view.page, |addr, page| {
-            match page.kind() {
-                PageKind::Data => {
-                    // Inner pages can not do partial consolidations because of the placeholders.
-                    // This is fine since inner pages doesn't consolidate as often as leaf pages.
-                    if page.tier().is_leaf()
-                        && builder.len() >= 2
-                        && page_size < page.size() / 2
-                        && range_limit.is_none()
-                        && !self.should_consolidate_page(page)
-                    {
-                        return true;
+        self.walk_page(
+            view.addr,
+            view.page,
+            |addr, page| {
+                match page.kind() {
+                    PageKind::Data => {
+                        // Inner pages can not do partial consolidations because of the
+                        // placeholders. This is fine since inner pages
+                        // doesn't consolidate as often as leaf pages.
+                        if page.tier().is_leaf()
+                            && builder.len() >= 2
+                            && page_size < page.size() / 2
+                            && range_limit.is_none()
+                            && !self.should_consolidate_page(page)
+                        {
+                            return true;
+                        }
+                        builder.add(SortedPageIter::from(page));
+                        page_size += page.size();
                     }
-                    builder.add(SortedPageIter::from(page));
-                    page_size += page.size();
-                }
-                PageKind::Split => {
-                    if range_limit.is_none() {
-                        let (split_key, _) = split_delta_from_page(page);
-                        range_limit = Some(split_key);
+                    PageKind::Split => {
+                        if range_limit.is_none() {
+                            let (split_key, _) = split_delta_from_page(page);
+                            range_limit = Some(split_key);
+                        }
                     }
                 }
-            }
-            last_page = page;
-            page_addrs.push(addr);
-            false
-        })
+                last_page = page;
+                page_addrs.push(addr);
+                false
+            },
+            AccessHint::READ_THEN_REPLACE,
+        )
         .await?;
         let iter = MergingPageIter::new(builder.build(), range_limit);
         Ok(ConsolidationInfo {
@@ -752,7 +774,10 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         } else {
             let addr = view.page.chain_next();
             assert!(addr != 0);
-            let page = self.guard.read_page(addr).await?;
+            let page = self
+                .guard
+                .read_page(addr, AccessHint::READ_THEN_REPLACE)
+                .await?;
             (addr, page)
         };
 
@@ -761,21 +786,26 @@ impl<'a, E: Env> TreeTxn<'a, E> {
         let mut builder = MergingIterBuilder::with_capacity(chain_len);
         let mut page_addrs = Vec::with_capacity(chain_len);
         let mut range_limit = None;
-        self.walk_page(old_addr, old_page, |addr, page| {
-            match page.kind() {
-                PageKind::Data => {
-                    builder.add(SortedPageIter::<K, V>::from(page));
-                }
-                PageKind::Split => {
-                    if range_limit.is_none() {
-                        let (split_key, _) = split_delta_from_page(page);
-                        range_limit = Some(split_key);
+        self.walk_page(
+            old_addr,
+            old_page,
+            |addr, page| {
+                match page.kind() {
+                    PageKind::Data => {
+                        builder.add(SortedPageIter::<K, V>::from(page));
+                    }
+                    PageKind::Split => {
+                        if range_limit.is_none() {
+                            let (split_key, _) = split_delta_from_page(page);
+                            range_limit = Some(split_key);
+                        }
                     }
                 }
-            }
-            page_addrs.push(addr);
-            false
-        })
+                page_addrs.push(addr);
+                false
+            },
+            AccessHint::READ_THEN_REPLACE,
+        )
         .await?;
 
         // Merge the delta pages.
