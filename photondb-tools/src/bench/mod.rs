@@ -200,12 +200,14 @@ impl From<&str> for BenchmarkType {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum StoreType {
     Photon,
+    Sled,
 }
 
 impl fmt::Display for StoreType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             StoreType::Photon => "photon",
+            StoreType::Sled => "sled",
         })
     }
 }
@@ -244,6 +246,7 @@ pub(crate) async fn run(config: Args) -> Result<()> {
     use photondb::env::Std as BenchEnv;
     match config.store_type {
         StoreType::Photon => run_store::<PhotondbStore<BenchEnv>, BenchEnv>(config, BenchEnv).await,
+        StoreType::Sled => run_store::<SeldStore<BenchEnv>, BenchEnv>(config, BenchEnv).await,
     }
 }
 

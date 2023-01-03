@@ -4,8 +4,9 @@ use ::photondb::TableStats;
 use async_trait::async_trait;
 
 mod photondb;
+mod sled;
 
-pub(crate) use self::photondb::PhotondbStore;
+pub(crate) use self::{photondb::PhotondbStore, sled::SeldStore};
 use super::*;
 
 #[async_trait]
